@@ -17,6 +17,14 @@ const LAB_TESTS = [
   'Liver Function', 'Kidney Function', 'Urinalysis', 'ECG', 'X-Ray', 'Ultrasound',
 ];
 
+/** Quick-add diagnoses — any specialty; doctors can add custom tags too. */
+const DIAGNOSIS_PRESETS = [
+  'Hypertension', 'Type 2 Diabetes', 'Acute bronchitis', 'Migraine',
+  'Gastroenteritis', 'Anxiety disorder', 'Osteoarthritis', 'Hypothyroidism',
+  'Atrial fibrillation', 'COPD exacerbation', 'Cellulitis', 'Renal colic',
+  'Vertigo', 'Depression', 'Asthma exacerbation', 'Anemia',
+];
+
 const BASE_URL = 'http://localhost:5001';
 
 function MarkdownPreview({ content }) {
@@ -42,9 +50,13 @@ export default function CaseManage() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
-  const [diagnosis, setDiagnosis] = useState('');
+  const [chiefComplaint, setChiefComplaint] = useState('');
+  const [diagnosesList, setDiagnosesList] = useState([]);
+  const [dxInput, setDxInput] = useState('');
   const [symptoms, setSymptoms] = useState('');
   const [notes, setNotes] = useState('');
+  const [plannedLab, setPlannedLab] = useState(false);
+  const [plannedSurgery, setPlannedSurgery] = useState(false);
   const [selectedTests, setSelectedTests] = useState([]);
   const [prescription, setPrescription] = useState({ medication_name: '', dosage: '', frequency: '', duration: '' });
   const [consultDoc, setConsultDoc] = useState('');
@@ -71,9 +83,14 @@ export default function CaseManage() {
       const res = await API.get(`/doctor/case/${caseId}`);
       const c = res.data.data;
       setCaseData(c);
-      if (c.diagnosis) setDiagnosis(c.diagnosis);
+      if (c.diagnoses?.length) setDiagnosesList([...c.diagnoses]);
+      else if (c.diagnosis) setDiagnosesList(c.diagnosis.split(';').map((s) => s.trim()).filter(Boolean));
+      else setDiagnosesList([]);
+      setChiefComplaint(c.chief_complaint || '');
       if (c.symptoms?.length) setSymptoms(c.symptoms.join(', '));
       if (c.consultation_document) setConsultDoc(c.consultation_document);
+      setPlannedLab(!!c.planned_lab);
+      setPlannedSurgery(!!c.planned_surgery);
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to load case');
     } finally {
@@ -127,22 +144,55 @@ export default function CaseManage() {
   const aiSuggestDiagnosis = async () => {
     setAiLoading('diag'); setAiDiagnoses([]);
     try {
-      const res = await API.post('/ai/suggest-diagnosis', { symptoms });
+      const res = await API.post('/ai/suggest-diagnosis', {
+        symptoms: symptoms || undefined,
+        chief_complaint: chiefComplaint || undefined,
+      });
       const data = res.data.data?.suggestion;
-      if (data?.diagnoses?.length) {
-        setAiDiagnoses(data.diagnoses);
-        setDiagnosis(data.diagnoses[0].name);
-      }
+      if (data?.diagnoses?.length) setAiDiagnoses(data.diagnoses);
     } catch (err) {
       setError(err.response?.data?.message || 'AI diagnosis failed');
     } finally { setAiLoading(null); }
   };
 
+  const addDiagnosisTag = (name) => {
+    const t = String(name).trim();
+    if (!t || diagnosesList.includes(t)) return;
+    setDiagnosesList((prev) => [...prev, t]);
+  };
+
+  const removeDiagnosisTag = (name) => {
+    setDiagnosesList((prev) => prev.filter((x) => x !== name));
+  };
+
+  const saveAssessment = async () => {
+    if (diagnosesList.length === 0) {
+      setError('Add at least one diagnosis (use quick picks, AI, or type your own).');
+      return;
+    }
+    setActing(true); setError(''); setSuccess('');
+    try {
+      await API.post(`/doctor/case/${caseId}/diagnose`, {
+        diagnoses: diagnosesList,
+        chief_complaint: chiefComplaint,
+        symptoms,
+        notes,
+        planned_lab: plannedLab,
+        planned_surgery: plannedSurgery,
+      });
+      setSuccess('Assessment saved');
+      await fetchCase();
+    } catch (err) {
+      setError(err.response?.data?.message || 'Save failed');
+    } finally { setActing(false); }
+  };
+
   const aiSuggestMedicines = async (extraContext) => {
     setAiLoading('presc'); setError('');
     try {
+      const dx = caseData.diagnoses?.length ? caseData.diagnoses.join('; ') : (caseData.diagnosis || caseData.title);
       const res = await API.post('/ai/suggest-prescription', {
-        diagnosis: caseData.diagnosis || caseData.title,
+        diagnosis: dx,
         symptoms: extraContext || caseData.symptoms?.join(', '),
       });
       const data = res.data.data?.suggestion;
@@ -209,7 +259,11 @@ export default function CaseManage() {
   const isCompleted = caseData.status === 'completed';
   const isDoctorStage = isConsultation || isReview;
   const isWaiting = isActive && !isDoctorStage && !isSurgery;
-  const hasDiagnosis = !!caseData.diagnosis;
+  const hasDiagnosis = !!(caseData.diagnoses?.length || caseData.diagnosis);
+  const workupBlocksMeds =
+    plannedLab || plannedSurgery || caseData.planned_lab || caseData.planned_surgery;
+  const canMedsInConsult = isConsultation && !workupBlocksMeds;
+  const showDocAndPharmacyInConsult = canMedsInConsult;
   const hasPrescriptions = caseData.prescriptions?.length > 0;
   const hasConsultDoc = !!caseData.consultation_document;
 
@@ -274,7 +328,9 @@ export default function CaseManage() {
       {hasDiagnosis && (
         <div className="bg-teal-50 rounded-xl p-4 border border-teal-200">
           <p className="text-xs font-semibold text-teal-700 mb-1">Diagnosis</p>
-          <p className="text-sm font-medium text-teal-900">{caseData.diagnosis}</p>
+          <p className="text-sm font-medium text-teal-900">
+            {caseData.diagnoses?.length ? caseData.diagnoses.join('; ') : caseData.diagnosis}
+          </p>
           {caseData.symptoms?.length > 0 && (
             <div className="flex flex-wrap gap-1.5 mt-2">
               {caseData.symptoms.map((s, i) => (
@@ -381,11 +437,23 @@ export default function CaseManage() {
         <Link to="/doctor" className="p-2 hover:bg-gray-100 rounded-xl transition-colors">
           <ArrowLeft className="h-5 w-5 text-gray-600" />
         </Link>
-        <div className="flex-1">
-          <h1 className="text-2xl font-bold text-gray-900">{caseData.title}</h1>
-          <p className="text-sm text-gray-500">
+        <div className="flex-1 min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-2xl font-bold text-gray-900">{caseData.title}</h1>
+            {caseData.pathway_label && (
+              <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-indigo-50 text-indigo-800 border border-indigo-100">
+                {caseData.pathway_label}
+              </span>
+            )}
+          </div>
+          <p className="text-sm text-gray-500 mt-1">
             {caseData.patient_id?.user_id?.name || 'Patient'} &middot;
-            Stage: <span className="font-semibold text-teal-600">{stage?.replace(/_/g, ' ')}</span>
+            Step: <span className="font-semibold text-teal-600">{stage?.replace(/_/g, ' ')}</span>
+            {caseData.patient_next_step && (
+              <span className="block sm:inline sm:before:content-['_·_'] text-gray-600 mt-0.5 sm:mt-0 text-xs sm:text-sm">
+                Patient sees: {caseData.patient_next_step}
+              </span>
+            )}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -484,7 +552,9 @@ export default function CaseManage() {
           {hasDiagnosis && (
             <div className="bg-teal-50 rounded-2xl border border-teal-200 p-5">
               <p className="text-xs font-semibold text-teal-700 mb-1">Diagnosis</p>
-              <p className="text-sm font-medium text-teal-900">{caseData.diagnosis}</p>
+              <p className="text-sm font-medium text-teal-900">
+                {caseData.diagnoses?.length ? caseData.diagnoses.join('; ') : caseData.diagnosis}
+              </p>
             </div>
           )}
 
@@ -510,34 +580,63 @@ export default function CaseManage() {
       {/* ============ CONSULTATION STAGE ============ */}
       {isActive && isConsultation && (
         <>
-          {/* STEP 1: Diagnosis */}
+          {/* STEP 1: Clinical assessment */}
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 space-y-4">
             <h3 className="text-base font-semibold text-gray-900 flex items-center gap-2">
               <div className="w-7 h-7 bg-teal-600 text-white rounded-full flex items-center justify-center text-xs font-bold">1</div>
-              <Stethoscope className="h-5 w-5 text-teal-600" /> Diagnosis
+              <Stethoscope className="h-5 w-5 text-teal-600" /> Clinical assessment
               {hasDiagnosis && <CheckCircle className="h-4 w-4 text-green-500" />}
             </h3>
+            <p className="text-sm text-gray-500">
+              Record reason for visit, symptoms (anything — not only fever), and one or more working diagnoses. AI can suggest options; add your own anytime.
+            </p>
 
-            {hasDiagnosis && (
-              <div className="bg-teal-50 rounded-xl p-4">
-                <p className="text-sm font-medium text-teal-900">{caseData.diagnosis}</p>
-                {caseData.symptoms?.length > 0 && <p className="text-xs text-teal-700 mt-1">Symptoms: {caseData.symptoms.join(', ')}</p>}
-                <p className="text-[10px] text-teal-500 mt-2">You can update the diagnosis below if needed.</p>
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 mb-1">Reason for visit / chief complaint</label>
+              <textarea value={chiefComplaint} onChange={(e) => setChiefComplaint(e.target.value)} rows={2}
+                className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-teal-500 resize-none"
+                placeholder="What brought the patient in? (e.g. chest tightness for 2 days, wound check, routine follow-up...)" />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 mb-1">Symptoms &amp; clinical findings</label>
+              <textarea value={symptoms} onChange={(e) => setSymptoms(e.target.value)} rows={2}
+                className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-teal-500 resize-none"
+                placeholder="Comma-separated or short paragraphs — any presentation." />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 mb-2">Working diagnoses (add multiple)</label>
+              <div className="flex flex-wrap gap-1.5 mb-2">
+                {DIAGNOSIS_PRESETS.map((p) => (
+                  <button key={p} type="button" onClick={() => addDiagnosisTag(p)}
+                    className="px-2 py-0.5 rounded-lg text-[11px] font-medium border border-gray-200 bg-gray-50 text-gray-700 hover:border-teal-300 hover:bg-teal-50">
+                    + {p}
+                  </button>
+                ))}
               </div>
-            )}
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <input value={symptoms} onChange={e => setSymptoms(e.target.value)}
-                className="px-4 py-2.5 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-teal-500"
-                placeholder="Symptoms (comma separated)" />
-              <div className="flex gap-2">
-                <input value={diagnosis} onChange={e => setDiagnosis(e.target.value)}
-                  className="flex-1 px-4 py-2.5 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-teal-500"
-                  placeholder="Diagnosis" />
-                <button disabled={aiLoading === 'diag' || !symptoms} onClick={aiSuggestDiagnosis}
-                  className="px-3 py-2 bg-purple-600 text-white rounded-xl text-xs font-medium hover:bg-purple-700 disabled:opacity-40 flex items-center gap-1 whitespace-nowrap">
+              <div className="flex flex-wrap gap-2 min-h-[36px] p-2 rounded-xl border border-gray-200 bg-gray-50/50">
+                {diagnosesList.map((d) => (
+                  <span key={d} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-teal-100 text-teal-900 text-xs font-medium">
+                    {d}
+                    <button type="button" onClick={() => removeDiagnosisTag(d)} className="hover:text-red-600" aria-label="Remove">×</button>
+                  </span>
+                ))}
+                {diagnosesList.length === 0 && <span className="text-xs text-gray-400">Use quick picks, AI, or type below and press Enter.</span>}
+              </div>
+              <div className="flex gap-2 mt-2">
+                <input value={dxInput} onChange={(e) => setDxInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') { e.preventDefault(); addDiagnosisTag(dxInput); setDxInput(''); }
+                  }}
+                  className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-teal-500"
+                  placeholder="Type a diagnosis and press Enter" />
+                <button type="button" onClick={() => { addDiagnosisTag(dxInput); setDxInput(''); }}
+                  className="px-3 py-2 bg-teal-600 text-white rounded-lg text-xs font-medium hover:bg-teal-700">Add</button>
+                <button disabled={aiLoading === 'diag' || (!symptoms.trim() && !chiefComplaint.trim())} onClick={aiSuggestDiagnosis}
+                  className="px-3 py-2 bg-purple-600 text-white rounded-lg text-xs font-medium hover:bg-purple-700 disabled:opacity-40 flex items-center gap-1 whitespace-nowrap">
                   {aiLoading === 'diag' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
-                  AI Suggest
+                  AI suggest
                 </button>
               </div>
             </div>
@@ -545,157 +644,188 @@ export default function CaseManage() {
             {aiDiagnoses.length > 0 && (
               <div className="space-y-2">
                 <p className="text-xs font-semibold text-purple-700 flex items-center gap-1.5">
-                  <Sparkles className="h-3.5 w-3.5" /> AI Suggested Diagnoses:
+                  <Sparkles className="h-3.5 w-3.5" /> AI suggestions — click to add
                 </p>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
                   {aiDiagnoses.map((d, i) => (
                     <button key={i} type="button"
-                      onClick={() => { setDiagnosis(d.name); setAiDiagnoses([]); }}
-                      className={`text-left p-3 rounded-xl border-2 transition-all hover:shadow-md ${
-                        diagnosis === d.name ? 'border-purple-500 bg-purple-50' : 'border-gray-200 bg-white hover:border-purple-300'
-                      }`}>
+                      onClick={() => addDiagnosisTag(d.name)}
+                      className="text-left p-3 rounded-xl border-2 border-gray-200 bg-white hover:border-purple-300 hover:shadow-sm">
                       <p className="text-sm font-semibold text-gray-900">{d.name}</p>
                       {d.reason && <p className="text-xs text-gray-500 mt-0.5">{d.reason}</p>}
                     </button>
                   ))}
                 </div>
+                <button type="button" onClick={() => {
+                  setDiagnosesList((prev) => {
+                    const next = [...prev];
+                    aiDiagnoses.forEach((d) => {
+                      const n = String(d.name).trim();
+                      if (n && !next.includes(n)) next.push(n);
+                    });
+                    return next;
+                  });
+                  setAiDiagnoses([]);
+                }} className="text-xs font-medium text-purple-700 hover:underline">Add all to list</button>
               </div>
             )}
 
-            <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2}
-              className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-teal-500 resize-none"
-              placeholder="Consultation notes..." />
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 mb-1">Consultation notes</label>
+              <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3}
+                className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-teal-500 resize-none"
+                placeholder="Examination, history, differentials, counselling..." />
+            </div>
 
-            <button disabled={acting || !diagnosis}
-              onClick={() => { doAction(`/doctor/case/${caseId}/diagnose`, { diagnosis, symptoms, notes }); setAiDiagnoses([]); }}
+            <button disabled={acting || diagnosesList.length === 0}
+              onClick={saveAssessment}
               className="px-5 py-2.5 bg-teal-600 text-white rounded-xl text-sm font-medium hover:bg-teal-700 disabled:opacity-40 flex items-center gap-2">
-              {acting ? <Loader2 className="h-4 w-4 animate-spin" /> : <><ClipboardList className="h-4 w-4" /> {hasDiagnosis ? 'Update Diagnosis' : 'Save Diagnosis'}</>}
+              {acting ? <Loader2 className="h-4 w-4 animate-spin" /> : <><ClipboardList className="h-4 w-4" /> Save assessment</>}
             </button>
           </div>
 
-          {/* STEP 2: Choose Next Step */}
+          {/* STEP 2: Workup — checkboxes + lab / surgery only (no medicines until review if checked) */}
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 space-y-5">
-            <h3 className="text-base font-semibold text-gray-900 flex items-center gap-2">
-              <div className="w-7 h-7 bg-amber-500 text-white rounded-full flex items-center justify-center text-xs font-bold">2</div>
-              Choose Next Step
-            </h3>
+            <div>
+              <h3 className="text-base font-semibold text-gray-900 flex items-center gap-2">
+                <div className="w-7 h-7 bg-amber-500 text-white rounded-full flex items-center justify-center text-xs font-bold">2</div>
+                Lab or surgery needed?
+              </h3>
+              <p className="text-sm text-gray-500 mt-2 ml-9">
+                Tick only what applies. If <span className="font-medium text-gray-800">either</span> is checked, medicines wait until results / surgery are done and the case returns to you in <span className="font-medium">Doctor review</span>.
+                Leave both unchecked for a simple visit with prescriptions only.
+              </p>
+            </div>
 
-            {/* Prescriptions */}
-            <div className="border border-gray-200 rounded-2xl p-5 space-y-3">
-              <h4 className="font-semibold text-green-800 flex items-center gap-2">
-                <Pill className="h-4 w-4" /> Prescriptions
-                {hasPrescriptions && <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">{caseData.prescriptions.length} added</span>}
-              </h4>
+            <div className="space-y-3 rounded-xl border border-gray-200 p-4 bg-gray-50/80">
+              <label className="flex items-start gap-3 cursor-pointer">
+                <input type="checkbox" className="mt-1 rounded border-gray-300 text-amber-600 focus:ring-amber-500"
+                  checked={plannedLab} onChange={(e) => setPlannedLab(e.target.checked)} />
+                <span>
+                  <span className="font-semibold text-gray-900">Lab tests required</span>
+                  <span className="block text-xs text-gray-600">Patient must complete tests before medicines. You will review results next.</span>
+                </span>
+              </label>
+              <label className="flex items-start gap-3 cursor-pointer">
+                <input type="checkbox" className="mt-1 rounded border-gray-300 text-rose-600 focus:ring-rose-500"
+                  checked={plannedSurgery} onChange={(e) => setPlannedSurgery(e.target.checked)} />
+                <span>
+                  <span className="font-semibold text-gray-900">Surgery / procedure required</span>
+                  <span className="block text-xs text-gray-600">Case moves to surgery first; medicines after recovery review.</span>
+                </span>
+              </label>
+            </div>
 
-              <button disabled={aiLoading === 'presc'} onClick={() => aiSuggestMedicines()}
-                className="w-full py-2 bg-purple-600 text-white rounded-xl text-xs font-semibold hover:bg-purple-700 disabled:opacity-50 flex items-center justify-center gap-1.5">
-                {aiLoading === 'presc' ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> AI adding...</> : <><Sparkles className="h-3.5 w-3.5" /> AI Auto-Fill Medicines</>}
-              </button>
-
-              {hasPrescriptions && (
-                <div className="space-y-1.5 p-3 bg-green-50 rounded-xl border border-green-200">
-                  {caseData.prescriptions.map((p, i) => renderPrescriptionRow(p, i, true))}
+            {plannedLab && (
+              <div className="border border-amber-200 rounded-2xl p-5 space-y-3 bg-amber-50/40">
+                <h4 className="font-semibold text-amber-900 flex items-center gap-2">
+                  <FlaskConical className="h-4 w-4" /> Select tests &amp; send to lab
+                </h4>
+                <div className="flex flex-wrap gap-1.5">
+                  {LAB_TESTS.map((t) => (
+                    <button key={t} type="button"
+                      onClick={() => setSelectedTests((prev) => (prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t]))}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors ${
+                        selectedTests.includes(t) ? 'bg-amber-200 border-amber-400 text-amber-900' : 'bg-white border-gray-200 text-gray-600 hover:border-amber-300'
+                      }`}>
+                      {t}
+                    </button>
+                  ))}
                 </div>
-              )}
-
-              <div className="grid grid-cols-2 gap-2">
-                <input value={prescription.medication_name} onChange={e => setPrescription({ ...prescription, medication_name: e.target.value })}
-                  className="px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-green-500" placeholder="Medicine name *" />
-                <input value={prescription.dosage} onChange={e => setPrescription({ ...prescription, dosage: e.target.value })}
-                  className="px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-green-500" placeholder="Dosage" />
-                <input value={prescription.frequency} onChange={e => setPrescription({ ...prescription, frequency: e.target.value })}
-                  className="px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-green-500" placeholder="Frequency" />
-                <input value={prescription.duration} onChange={e => setPrescription({ ...prescription, duration: e.target.value })}
-                  className="px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-green-500" placeholder="Duration" />
-              </div>
-              <button disabled={acting || !prescription.medication_name}
-                onClick={async () => {
-                  await doAction(`/doctor/case/${caseId}/add-prescription`, prescription);
-                  setPrescription({ medication_name: '', dosage: '', frequency: '', duration: '' });
-                }}
-                className="w-full py-2 bg-green-600 text-white rounded-lg text-xs font-semibold hover:bg-green-700 disabled:opacity-40 flex items-center justify-center gap-1.5">
-                {acting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <><Plus className="h-3.5 w-3.5" /> Add Medicine</>}
-              </button>
-            </div>
-
-            {/* Surgery */}
-            <div className="border border-rose-200 rounded-2xl p-5 space-y-3 bg-rose-50/30">
-              <h4 className="font-semibold text-rose-800 flex items-center gap-2">
-                <Scissors className="h-4 w-4" /> Schedule Surgery (Optional)
-              </h4>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                <input value={surgeryType} onChange={e => setSurgeryType(e.target.value)}
-                  className="px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-rose-500 bg-white" placeholder="Surgery type *" />
-                <input type="date" value={surgeryDate} onChange={e => setSurgeryDate(e.target.value)}
-                  className="px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-rose-500 bg-white" />
-              </div>
-              <textarea value={surgeryNotes} onChange={e => setSurgeryNotes(e.target.value)} rows={2}
-                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-rose-500 resize-none bg-white"
-                placeholder="Surgery notes / pre-op instructions..." />
-            </div>
-
-            {/* Lab tests */}
-            <div className="border border-gray-200 rounded-2xl p-5 space-y-3">
-              <h4 className="font-semibold text-amber-800 flex items-center gap-2">
-                <FlaskConical className="h-4 w-4" /> Lab Tests (Optional)
-              </h4>
-              <div className="flex flex-wrap gap-1.5">
-                {LAB_TESTS.map(t => (
-                  <button key={t} type="button"
-                    onClick={() => setSelectedTests(prev => prev.includes(t) ? prev.filter(x => x !== t) : [...prev, t])}
-                    className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors ${
-                      selectedTests.includes(t) ? 'bg-amber-200 border-amber-400 text-amber-900' : 'bg-white border-gray-200 text-gray-600 hover:border-amber-300'
-                    }`}>
-                    {t}
-                  </button>
-                ))}
-              </div>
-              {selectedTests.length > 0 && (
-                <p className="text-xs text-amber-700">{selectedTests.length} test(s) selected</p>
-              )}
-            </div>
-
-            {!hasConsultDoc && hasPrescriptions && (
-              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-start gap-2">
-                <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5 flex-shrink-0" />
-                <p className="text-xs text-amber-800">
-                  <span className="font-semibold">Consultation document required.</span> Save the consultation document (Step 3) before sending to Pharmacy.
-                </p>
+                <p className="text-[11px] text-amber-800">Save step 1 (assessment) first if you have not — lab needs a recorded diagnosis.</p>
+                <button disabled={acting || selectedTests.length === 0 || !hasDiagnosis}
+                  onClick={() => doAction(`/doctor/case/${caseId}/request-lab`, { tests: selectedTests.map((name) => ({ name })) })}
+                  className="w-full py-3 bg-amber-600 text-white rounded-xl text-sm font-semibold hover:bg-amber-700 disabled:opacity-40 flex items-center justify-center gap-2">
+                  {acting ? <Loader2 className="h-4 w-4 animate-spin" /> : <><FlaskConical className="h-4 w-4" /> Send to lab</>}
+                </button>
               </div>
             )}
 
-            {/* Action Buttons */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <button disabled={acting || !surgeryType}
-                onClick={() => doAction(`/doctor/case/${caseId}/schedule-surgery`, {
-                  surgery_type: surgeryType,
-                  scheduled_date: surgeryDate || undefined,
-                  notes: surgeryNotes,
-                  pre_op_instructions: surgeryNotes,
-                })}
-                className="py-3 bg-rose-600 text-white rounded-xl text-sm font-semibold hover:bg-rose-700 disabled:opacity-40 flex items-center justify-center gap-2">
-                {acting ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Scissors className="h-4 w-4" /> Schedule Surgery</>}
-              </button>
+            {plannedSurgery && (
+              <div className="border border-rose-200 rounded-2xl p-5 space-y-3 bg-rose-50/30">
+                <h4 className="font-semibold text-rose-900 flex items-center gap-2">
+                  <Scissors className="h-4 w-4" /> Schedule surgery
+                </h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  <input value={surgeryType} onChange={(e) => setSurgeryType(e.target.value)}
+                    className="px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-rose-500 bg-white" placeholder="Procedure / surgery type *" />
+                  <input type="date" value={surgeryDate} onChange={(e) => setSurgeryDate(e.target.value)}
+                    className="px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-rose-500 bg-white" />
+                </div>
+                <textarea value={surgeryNotes} onChange={(e) => setSurgeryNotes(e.target.value)} rows={2}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-rose-500 resize-none bg-white"
+                  placeholder="Pre-op notes / instructions..." />
+                <button disabled={acting || !surgeryType || !hasDiagnosis}
+                  onClick={() => doAction(`/doctor/case/${caseId}/schedule-surgery`, {
+                    surgery_type: surgeryType,
+                    scheduled_date: surgeryDate || undefined,
+                    notes: surgeryNotes,
+                    pre_op_instructions: surgeryNotes,
+                  })}
+                  className="w-full py-3 bg-rose-600 text-white rounded-xl text-sm font-semibold hover:bg-rose-700 disabled:opacity-40 flex items-center justify-center gap-2">
+                  {acting ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Scissors className="h-4 w-4" /> Schedule surgery</>}
+                </button>
+              </div>
+            )}
 
-              <button disabled={acting || selectedTests.length === 0}
-                onClick={() => doAction(`/doctor/case/${caseId}/request-lab`, { tests: selectedTests.map(name => ({ name })) })}
-                className="py-3 bg-amber-600 text-white rounded-xl text-sm font-semibold hover:bg-amber-700 disabled:opacity-40 flex items-center justify-center gap-2">
-                {acting ? <Loader2 className="h-4 w-4 animate-spin" /> : <><FlaskConical className="h-4 w-4" /> Send to Lab</>}
-              </button>
-
-              <button disabled={acting || !hasPrescriptions || !hasConsultDoc}
-                onClick={() => doAction(`/doctor/case/${caseId}/send-to-pharmacy`)}
-                className="py-3 bg-green-600 text-white rounded-xl text-sm font-semibold hover:bg-green-700 disabled:opacity-40 flex items-center justify-center gap-2">
-                {acting ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Pill className="h-4 w-4" /> Send to Pharmacy</>}
-              </button>
-            </div>
+            {(plannedLab || plannedSurgery) && (
+              <div className="rounded-xl bg-sky-50 border border-sky-200 p-4 text-sm text-sky-950">
+                <p className="font-semibold text-sky-900 mb-1">Medicines &amp; pharmacy</p>
+                <p className="text-sky-800 text-xs leading-relaxed">
+                  Prescriptions and &quot;Move to pharmacy&quot; are hidden here until lab/surgery work is finished. After results (or post-op review), you will continue in <strong>Doctor review</strong> to prescribe, generate the consultation document, and send to pharmacy.
+                </p>
+              </div>
+            )}
           </div>
 
-          {/* STEP 3: Consultation Document */}
+          {/* STEP 3–4: Prescriptions + document — only for simple (no lab/surgery) visits */}
+          {showDocAndPharmacyInConsult && (
+          <>
+          {/* STEP 3: Prescriptions */}
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 space-y-4">
             <h3 className="text-base font-semibold text-gray-900 flex items-center gap-2">
               <div className="w-7 h-7 bg-green-600 text-white rounded-full flex items-center justify-center text-xs font-bold">3</div>
-              <FileText className="h-5 w-5 text-green-600" /> Consultation Document
+              <Pill className="h-5 w-5 text-green-600" /> Prescriptions
+              {hasPrescriptions && <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">{caseData.prescriptions.length} added</span>}
+            </h3>
+            <p className="text-xs text-gray-500">For visits without lab or surgery workup. Use AI from your saved diagnoses and symptoms.</p>
+
+            <button disabled={aiLoading === 'presc'} onClick={() => aiSuggestMedicines()}
+              className="w-full py-2 bg-purple-600 text-white rounded-xl text-xs font-semibold hover:bg-purple-700 disabled:opacity-50 flex items-center justify-center gap-1.5">
+              {aiLoading === 'presc' ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> AI adding...</> : <><Sparkles className="h-3.5 w-3.5" /> AI suggest medicines</>}
+            </button>
+
+            {hasPrescriptions && (
+              <div className="space-y-1.5 p-3 bg-green-50 rounded-xl border border-green-200">
+                {caseData.prescriptions.map((p, i) => renderPrescriptionRow(p, i, true))}
+              </div>
+            )}
+
+            <div className="grid grid-cols-2 gap-2">
+              <input value={prescription.medication_name} onChange={(e) => setPrescription({ ...prescription, medication_name: e.target.value })}
+                className="px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-green-500" placeholder="Medicine name *" />
+              <input value={prescription.dosage} onChange={(e) => setPrescription({ ...prescription, dosage: e.target.value })}
+                className="px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-green-500" placeholder="Dosage" />
+              <input value={prescription.frequency} onChange={(e) => setPrescription({ ...prescription, frequency: e.target.value })}
+                className="px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-green-500" placeholder="Frequency" />
+              <input value={prescription.duration} onChange={(e) => setPrescription({ ...prescription, duration: e.target.value })}
+                className="px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-green-500" placeholder="Duration" />
+            </div>
+            <button disabled={acting || !prescription.medication_name}
+              onClick={async () => {
+                await doAction(`/doctor/case/${caseId}/add-prescription`, prescription);
+                setPrescription({ medication_name: '', dosage: '', frequency: '', duration: '' });
+              }}
+              className="w-full py-2 bg-green-600 text-white rounded-lg text-xs font-semibold hover:bg-green-700 disabled:opacity-40 flex items-center justify-center gap-1.5">
+              {acting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <><Plus className="h-3.5 w-3.5" /> Add medicine</>}
+            </button>
+          </div>
+
+          {/* STEP 4: Consultation Document */}
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 space-y-4">
+            <h3 className="text-base font-semibold text-gray-900 flex items-center gap-2">
+              <div className="w-7 h-7 bg-green-600 text-white rounded-full flex items-center justify-center text-xs font-bold">4</div>
+              <FileText className="h-5 w-5 text-green-600" /> Consultation document
               {hasConsultDoc && <CheckCircle className="h-4 w-4 text-green-500" />}
               {!hasConsultDoc && <span className="text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded-full font-semibold">Required</span>}
             </h3>
@@ -724,12 +854,37 @@ export default function CaseManage() {
                 placeholder="Draft consultation notes here (supports Markdown)..." />
             )}
 
+            <p className="text-xs text-gray-500">
+              Auto-generate uses chief complaint, symptoms, diagnoses, notes, and medicines from this case.
+            </p>
+
             <button disabled={acting || !consultDoc}
               onClick={() => doAction(`/doctor/case/${caseId}/save-document`, { document: consultDoc })}
               className="px-5 py-2.5 bg-green-600 text-white rounded-xl text-sm font-medium hover:bg-green-700 disabled:opacity-40 flex items-center gap-2">
-              {acting ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Save className="h-4 w-4" /> Save Document</>}
+              {acting ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Save className="h-4 w-4" /> Save document</>}
             </button>
           </div>
+
+          <div className="rounded-2xl border-2 border-teal-300 bg-gradient-to-br from-teal-50 via-white to-teal-50/50 p-6 shadow-lg">
+            <h3 className="text-sm font-semibold text-teal-900 uppercase tracking-wide mb-1">Move to pharmacy</h3>
+            <p className="text-sm text-gray-600 mb-4">
+              Use this only when prescriptions are complete and the consultation document is saved. This sends the case to pharmacy and emails the patient when configured.
+            </p>
+            {!hasPrescriptions && (
+              <p className="text-xs text-amber-800 mb-2 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">Add at least one prescription in step 3.</p>
+            )}
+            {hasPrescriptions && !hasConsultDoc && (
+              <p className="text-xs text-amber-800 mb-2 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">Save the consultation document in step 4 first.</p>
+            )}
+            <button
+              disabled={acting || !hasPrescriptions || !hasConsultDoc}
+              onClick={() => doAction(`/doctor/case/${caseId}/send-to-pharmacy`)}
+              className="w-full py-4 bg-teal-600 text-white rounded-xl text-base font-bold hover:bg-teal-700 disabled:opacity-40 flex items-center justify-center gap-2 shadow-lg shadow-teal-200">
+              {acting ? <Loader2 className="h-5 w-5 animate-spin" /> : <><Send className="h-5 w-5" /> Move to pharmacy</>}
+            </button>
+          </div>
+        </>
+      )}
         </>
       )}
 
@@ -739,8 +894,13 @@ export default function CaseManage() {
           {/* Previously saved diagnosis */}
           {hasDiagnosis && (
             <div className="bg-teal-50 rounded-2xl border border-teal-200 p-5">
-              <p className="text-xs font-semibold text-teal-700 mb-1">Previous Diagnosis</p>
-              <p className="text-sm font-medium text-teal-900">{caseData.diagnosis}</p>
+              <p className="text-xs font-semibold text-teal-700 mb-1">Diagnosis</p>
+              <p className="text-sm font-medium text-teal-900">
+                {caseData.diagnoses?.length ? caseData.diagnoses.join('; ') : caseData.diagnosis}
+              </p>
+              {caseData.chief_complaint && (
+                <p className="text-xs text-teal-700 mt-2"><span className="font-semibold">Chief complaint:</span> {caseData.chief_complaint}</p>
+              )}
               {caseData.symptoms?.length > 0 && (
                 <div className="flex flex-wrap gap-1.5 mt-2">
                   {caseData.symptoms.map((s, i) => (
@@ -934,35 +1094,22 @@ export default function CaseManage() {
             )}
           </div>
 
-          {/* Send to Pharmacy */}
-          <div className="bg-white rounded-2xl shadow-sm border border-teal-200 p-6 space-y-4">
-            <h3 className="text-base font-semibold text-gray-900 flex items-center gap-2">
-              <Send className="h-5 w-5 text-teal-600" /> Send to Pharmacy
-            </h3>
-            <p className="text-xs text-gray-500">
-              This will generate a PDF consultation report, email it to the patient, and send the case to pharmacy for medicine processing.
+          {/* Move to pharmacy — last action in review */}
+          <div className="rounded-2xl border-2 border-teal-300 bg-gradient-to-br from-teal-50 via-white to-teal-50/50 p-6 shadow-lg">
+            <h3 className="text-sm font-semibold text-teal-900 uppercase tracking-wide mb-1">Move to pharmacy</h3>
+            <p className="text-sm text-gray-600 mb-4">
+              Generates a PDF when possible, emails the patient if configured, and sends the case to pharmacy. Use only after prescriptions and the consultation report are saved.
             </p>
-
             {!hasPrescriptions && (
-              <div className="bg-green-50 border border-green-200 rounded-xl p-3 flex items-start gap-2">
-                <Pill className="h-4 w-4 text-green-600 mt-0.5 flex-shrink-0" />
-                <p className="text-xs text-green-800">Add at least one medicine in the Prescriptions section above.</p>
-              </div>
+              <p className="text-xs text-amber-800 mb-2 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">Add at least one medicine in the prescriptions section above.</p>
             )}
-
             {hasPrescriptions && !hasConsultDoc && (
-              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-start gap-2">
-                <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5 flex-shrink-0" />
-                <p className="text-xs text-amber-800">
-                  <span className="font-semibold">Consultation report required.</span> Save the report in the section above first.
-                </p>
-              </div>
+              <p className="text-xs text-amber-800 mb-2 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">Save the consultation report first.</p>
             )}
-
             <button disabled={acting || !hasPrescriptions || !hasConsultDoc}
               onClick={() => doAction(`/doctor/case/${caseId}/send-to-pharmacy`)}
-              className="w-full py-3.5 bg-teal-600 text-white rounded-xl font-bold hover:bg-teal-700 disabled:opacity-40 flex items-center justify-center gap-2 shadow-lg shadow-teal-200 text-base">
-              {acting ? <Loader2 className="h-5 w-5 animate-spin" /> : <><Send className="h-5 w-5" /> Send to Pharmacy</>}
+              className="w-full py-4 bg-teal-600 text-white rounded-xl text-base font-bold hover:bg-teal-700 disabled:opacity-40 flex items-center justify-center gap-2 shadow-lg shadow-teal-200">
+              {acting ? <Loader2 className="h-5 w-5 animate-spin" /> : <><Send className="h-5 w-5" /> Move to pharmacy</>}
             </button>
           </div>
         </div>

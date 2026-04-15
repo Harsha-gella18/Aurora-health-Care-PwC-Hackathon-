@@ -191,6 +191,9 @@ export default function DoctorDashboard() {
                       </div>
                       <p className="text-sm text-gray-500 mt-0.5 truncate">
                         {c.title}
+                        {c.pathway_label && (
+                          <span className="text-indigo-600 font-medium"> · {c.pathway_label}</span>
+                        )}
                         {c.diagnosis && <> &middot; <span className="font-medium text-gray-600">{c.diagnosis}</span></>}
                       </p>
                     </div>

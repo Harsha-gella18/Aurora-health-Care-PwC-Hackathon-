@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import {
   ArrowLeft, Calendar, Stethoscope, FlaskConical, Pill,
-  Receipt, CheckCircle, Clock, FileText, Search, Download
+  Receipt, CheckCircle, Clock, FileText, Search, Download, MapPin, Scissors,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import API from '../../api/axios';
@@ -12,13 +12,13 @@ import CaseProgressBar from '../../components/CaseProgressBar';
 
 const STAGE_LABELS = {
   appointment: 'Appointment', doctor_consultation: 'Doctor Consultation',
-  lab: 'Lab Tests', doctor_review: 'Doctor Review',
+  surgery: 'Surgery', lab: 'Lab Tests', doctor_review: 'Doctor Review',
   pharmacy: 'Pharmacy', billing: 'Billing', closed: 'Closed',
 };
 
 const STAGE_ICONS = {
-  appointment: Calendar, doctor_consultation: Stethoscope, lab: FlaskConical,
-  doctor_review: Search, pharmacy: Pill, billing: Receipt, closed: CheckCircle,
+  appointment: Calendar, doctor_consultation: Stethoscope, surgery: Scissors,
+  lab: FlaskConical, doctor_review: Search, pharmacy: Pill, billing: Receipt, closed: CheckCircle,
 };
 
 export default function CaseDetail() {
@@ -48,11 +48,16 @@ export default function CaseDetail() {
           <ArrowLeft className="h-5 w-5 text-gray-500" />
         </Link>
         <div className="flex-1">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-wrap">
             <h1 className="text-2xl font-bold text-gray-900">{caseData.title}</h1>
             <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${statusCls}`}>
               {caseData.status}
             </span>
+            {caseData.pathway_label && (
+              <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-indigo-50 text-indigo-700 border border-indigo-100">
+                {caseData.pathway_label}
+              </span>
+            )}
           </div>
           <p className="text-gray-500 text-sm mt-0.5">
             {caseData.doctor_id?.user_id?.name ? `Dr. ${caseData.doctor_id.user_id.name}` : ''}
@@ -60,6 +65,18 @@ export default function CaseDetail() {
           </p>
         </div>
       </div>
+
+      {caseData.patient_next_step && caseData.status === 'active' && (
+        <div className="bg-gradient-to-r from-teal-50 to-cyan-50 rounded-2xl border border-teal-100 p-5 flex gap-4 items-start">
+          <div className="w-10 h-10 rounded-xl bg-teal-100 flex items-center justify-center flex-shrink-0">
+            <MapPin className="h-5 w-5 text-teal-700" />
+          </div>
+          <div>
+            <p className="text-xs font-semibold text-teal-800 uppercase tracking-wide mb-0.5">What happens next</p>
+            <p className="text-sm text-teal-900 font-medium leading-relaxed">{caseData.patient_next_step}</p>
+          </div>
+        </div>
+      )}
 
       <Alert type="error" message={error} onClose={() => setError('')} />
 
@@ -73,8 +90,9 @@ export default function CaseDetail() {
       )}
 
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
-        <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-4">Case Progress</h3>
-        <CaseProgressBar stages={caseData.stages} />
+        <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-4">Your visit progress</h3>
+        <p className="text-xs text-gray-400 mb-4">Steps that do not apply to your visit are hidden.</p>
+        <CaseProgressBar stages={caseData.stages} hideSkipped />
       </div>
 
       {caseData.consultation_document && (

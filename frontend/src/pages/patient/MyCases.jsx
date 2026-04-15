@@ -14,7 +14,7 @@ const statusConfig = {
 
 const STAGE_LABELS = {
   appointment: 'Appointment', doctor_consultation: 'Consultation',
-  lab: 'Lab', doctor_review: 'Review',
+  surgery: 'Surgery', lab: 'Lab', doctor_review: 'Review',
   pharmacy: 'Pharmacy', billing: 'Billing', closed: 'Closed',
 };
 
@@ -72,8 +72,18 @@ export default function MyCases() {
                       {c.doctor_id?.user_id?.name ? `Dr. ${c.doctor_id.user_id.name}` : 'Doctor TBD'}
                       {' · '}
                       {new Date(c.createdAt).toLocaleDateString()}
-                      {' · '}
-                      Current: <span className="font-medium text-teal-600">{STAGE_LABELS[c.current_stage] || c.current_stage}</span>
+                      {c.pathway_label && (
+                        <>
+                          {' · '}
+                          <span className="text-indigo-600 font-medium">{c.pathway_label}</span>
+                        </>
+                      )}
+                    </p>
+                    <p className="text-xs text-gray-600 mt-1">
+                      Now: <span className="font-semibold text-teal-600">{STAGE_LABELS[c.current_stage] || c.current_stage?.replace(/_/g, ' ')}</span>
+                      {c.patient_next_step && c.status === 'active' && (
+                        <span className="text-gray-500"> — {c.patient_next_step}</span>
+                      )}
                     </p>
                   </div>
                   <div className="flex items-center gap-3 flex-shrink-0">
@@ -85,7 +95,7 @@ export default function MyCases() {
                   </div>
                 </div>
 
-                <CaseProgressBar stages={c.stages} compact />
+                <CaseProgressBar stages={c.stages} compact hideSkipped />
               </Link>
             );
           })}

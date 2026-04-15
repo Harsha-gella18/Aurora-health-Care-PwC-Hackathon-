@@ -1,14 +1,14 @@
-import { Check, Circle, Minus, Clock } from 'lucide-react';
+import { Check, Circle, Minus } from 'lucide-react';
 
 const STAGE_LABELS = {
-  appointment: 'Appointment',
-  doctor_consultation: 'Doctor',
+  appointment: 'Booked',
+  doctor_consultation: 'Doctor visit',
   surgery: 'Surgery',
-  lab: 'Lab',
-  doctor_review: 'Review',
-  pharmacy: 'Pharmacy',
-  billing: 'Billing',
-  closed: 'Closed',
+  lab: 'Lab tests',
+  doctor_review: 'Doctor review',
+  pharmacy: 'Medicines',
+  billing: 'Payment',
+  closed: 'Done',
 };
 
 const STAGE_COLORS = {
@@ -42,17 +42,17 @@ const STAGE_COLORS = {
   },
 };
 
-export default function CaseProgressBar({ stages = [], compact = false }) {
+export default function CaseProgressBar({ stages = [], compact = false, hideSkipped = false }) {
   const sorted = [...stages].sort((a, b) => a.order - b.order);
+  const visible = hideSkipped ? sorted.filter((s) => s.status !== 'skipped') : sorted;
 
   return (
     <div className="w-full overflow-x-auto">
       <div className={`flex items-start ${compact ? 'gap-0' : 'gap-0'} min-w-max`}>
-        {sorted.map((stage, i) => {
+        {visible.map((stage, i) => {
           const status = stage.status || 'pending';
           const colors = STAGE_COLORS[status];
-          const isLast = i === sorted.length - 1;
-          const prevCompleted = i > 0 && sorted[i - 1]?.status === 'completed';
+          const isLast = i === visible.length - 1;
 
           return (
             <div key={stage._id || stage.name} className="flex items-start">

@@ -57,6 +57,7 @@ export default function Appointments() {
   const [doctorUnavailableMsg, setDoctorUnavailableMsg] = useState('');
 
   const [reason, setReason] = useState('');
+  const [visitPathway, setVisitPathway] = useState('general');
 
   const dates = getNextFourteenDays();
   const isGeneral = selectedDepartment === 'General Medicine';
@@ -164,6 +165,7 @@ export default function Appointments() {
     setSelectedDate(null);
     setSelectedSlot(null);
     setReason('');
+    setVisitPathway('general');
     setDoctors([]);
     setAvailableSlots([]);
     setDoctorUnavailableMsg('');
@@ -200,6 +202,7 @@ export default function Appointments() {
       if (!isGeneral && selectedDoctorId) {
         body.doctor_id = selectedDoctorId;
       }
+      body.visit_pathway = visitPathway;
 
       const res = await API.post('/patient/book-appointment', body);
       const serverMsg = res.data?.message || 'Appointment booked!';
@@ -532,18 +535,45 @@ export default function Appointments() {
                     </div>
                   )}
 
-                  {/* Reason */}
+                  {/* Reason + visit type */}
                   {selectedSlot && (
-                    <div>
-                      <label className="block text-sm font-semibold text-gray-700 mb-1.5">Reason for Visit</label>
-                      <input
-                        type="text"
-                        value={reason}
-                        onChange={(e) => setReason(e.target.value)}
-                        className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-teal-500 transition-all"
-                        placeholder="e.g., Fever, skin rash, chest pain, regular checkup..."
-                      />
-                    </div>
+                    <>
+                      <div>
+                        <label className="block text-sm font-semibold text-gray-700 mb-1.5">Reason for Visit</label>
+                        <input
+                          type="text"
+                          value={reason}
+                          onChange={(e) => setReason(e.target.value)}
+                          className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-teal-500 transition-all"
+                          placeholder="e.g., Fever, skin rash, chest pain, regular checkup..."
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-semibold text-gray-700 mb-1.5">Type of visit</label>
+                        <p className="text-xs text-gray-500 mb-2">Helps your care team prepare the right steps for you.</p>
+                        <div className="grid grid-cols-1 gap-2">
+                          {[
+                            { value: 'general', title: 'General consultation', desc: 'Typical outpatient visit' },
+                            { value: 'lab_followup', title: 'Likely needs lab tests', desc: 'Follow-up or tests your doctor may order' },
+                            { value: 'surgery', title: 'Surgery or procedure', desc: 'Planned or discussed surgical care' },
+                          ].map((opt) => (
+                            <button
+                              key={opt.value}
+                              type="button"
+                              onClick={() => setVisitPathway(opt.value)}
+                              className={`text-left p-3 rounded-xl border-2 transition-all ${
+                                visitPathway === opt.value
+                                  ? 'border-teal-500 bg-teal-50'
+                                  : 'border-gray-100 hover:border-teal-200'
+                              }`}
+                            >
+                              <p className="font-semibold text-sm text-gray-900">{opt.title}</p>
+                              <p className="text-xs text-gray-500 mt-0.5">{opt.desc}</p>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </>
                   )}
                 </div>
 
